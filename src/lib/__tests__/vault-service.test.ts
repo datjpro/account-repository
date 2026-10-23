@@ -1,18 +1,22 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { VaultBackgroundController } from '@/lib/vault-service';
-import { clearStoredVaultEnvelope } from '@/lib/storage';
+import {
+  clearStoredVaultEnvelope,
+  loadEncryptedVaultEnvelope
+} from '@/lib/storage';
 
 describe('VaultBackgroundController Lifecycle & Origin Security', () => {
   beforeEach(async () => {
     await clearStoredVaultEnvelope();
   });
 
-  it('initializes, saves, filters by eTLD+1, locks, and unlocks cleanly', async () => {
+  it('initializes, saves with zero plaintext at rest, filters by eTLD+1, blocks spoofed origins, locks, and unlocks cleanly', async () => {
     const controller = new VaultBackgroundController();
+    const masterPassword = 'StrongMasterPassword#2026';
 
     const initRes = await controller.handleMessage({
       type: 'INITIALIZE_VAULT',
-      payload: { masterPassword: 'StrongMasterPassword#2026' }
+      payload: { masterPassword }
     });
     expect(initRes.ok).toBe(true);
     if (initRes.ok) {
@@ -29,13 +33,43 @@ describe('VaultBackgroundController Lifecycle & Origin Security', () => {
           url: 'https://www.paypal.com',
           username: 'buyer@example.com',
           password: 'PayPalSecretPassword!1',
-          notes: '',
+          notes: 'TopSecretRecoveryNote999',
           favorite: false
         }
       },
       'https://www.paypal.com/signin'
     );
     expect(saveRes.ok).toBe(true);
+
+    // Zero-Plaintext Verification: inspect raw stored envelope on disk/storage
+    const storedEnvelope = await loadEncryptedVaultEnvelope();
+    expect(storedEnvelope).not.toBeNull();
+    const rawStoredJson = JSON.stringify(storedEnvelope);
+    expect(rawStoredJson).not.toContain(masterPassword);
+    expect(rawStoredJson).not.toContain('buyer@example.com');
+    expect(rawStoredJson).not.toContain('PayPalSecretPassword!1');
+    expect(rawStoredJson).not.toContain('TopSecretRecoveryNote999');
+    expect(rawStoredJson).not.toContain('paypal.com');
+
+    // Block cross-origin SAVE_CREDENTIALS spoofing from a malicious tab
+    const maliciousSave = await controller.handleMessage(
+      {
+        type: 'SAVE_CREDENTIALS',
+        payload: {
+          title: 'Fake PayPal',
+          url: 'https://www.paypal.com',
+          username: 'victim@example.com',
+          password: 'StolenPassword123',
+          notes: '',
+          favorite: false
+        }
+      },
+      'https://evil-attacker-site.com/login'
+    );
+    expect(maliciousSave.ok).toBe(false);
+    if (!maliciousSave.ok) {
+      expect(maliciousSave.code).toBe('VALIDATION_ERROR');
+    }
 
     // Request from legitimate subdomain (sub.paypal.com) -> returns match
     const matchRes = await controller.handleMessage(
@@ -85,7 +119,7 @@ describe('VaultBackgroundController Lifecycle & Origin Security', () => {
     // Unlock with correct password restores access
     const goodUnlock = await controller.handleMessage({
       type: 'UNLOCK_VAULT',
-      payload: { masterPassword: 'StrongMasterPassword#2026' }
+      payload: { masterPassword }
     });
     expect(goodUnlock.ok).toBe(true);
     if (goodUnlock.ok) {

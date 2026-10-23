@@ -18,9 +18,6 @@ describe('Domain Parsing & Anti-Phishing eTLD+1 Verification', () => {
     ).toBe(true);
     expect(
       isDomainMatchForAutofill('https://login.microsoft.com', 'https://account.microsoft.com')
-    ).BeTruthy;
-    expect(
-      isDomainMatchForAutofill('https://login.microsoft.com', 'https://account.microsoft.com')
     ).toBe(true);
   });
 

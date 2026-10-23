@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   base64ToBytes,
+  bytesToBase64,
   decryptWithKey,
   deriveMasterKey,
   encryptWithKey,
@@ -25,6 +26,18 @@ describe('Crypto Engine (AES-256-GCM + PBKDF2-SHA256)', () => {
     expect(iv1.byteLength).toBe(IV_BYTE_LENGTH);
     expect(iv2.byteLength).toBe(IV_BYTE_LENGTH);
     expect(Buffer.from(iv1).equals(Buffer.from(iv2))).toBe(false);
+  });
+
+  it('enforces minimum 600,000 PBKDF2 iterations and 16-byte salt', async () => {
+    const validSalt = generateSalt();
+    await expect(
+      deriveMasterKey('ValidPassword!123', validSalt, 100_000)
+    ).rejects.toThrow(/at least 600000/);
+
+    const shortSalt = new Uint8Array(8);
+    await expect(
+      deriveMasterKey('ValidPassword!123', shortSalt, PBKDF2_ITERATIONS)
+    ).rejects.toThrow(/at least 16 bytes/);
   });
 
   it('derives a non-extractable AES-256-GCM CryptoKey and performs encrypt-decrypt roundtrip', async () => {
@@ -53,6 +66,30 @@ describe('Crypto Engine (AES-256-GCM + PBKDF2-SHA256)', () => {
       key
     );
     expect(decrypted).toBe(secretPlaintext);
+  });
+
+  it('detects and rejects tampered ciphertext or tampered IV via AES-GCM auth tag', async () => {
+    const salt = generateSalt();
+    const key = await deriveMasterKey('TamperTestMasterKey!2026', salt);
+    const { ivBase64, ciphertextBase64 } = await encryptWithKey('SensitiveVaultData', key);
+
+    // Flip 1 bit in ciphertext
+    const cipherBytes = base64ToBytes(ciphertextBase64);
+    cipherBytes[0] ^= 0xff;
+    const tamperedCipherBase64 = bytesToBase64(cipherBytes);
+
+    await expect(
+      decryptWithKey(tamperedCipherBase64, ivBase64, key)
+    ).rejects.toThrow();
+
+    // Flip 1 bit in IV
+    const ivBytes = base64ToBytes(ivBase64);
+    ivBytes[0] ^= 0xff;
+    const tamperedIvBase64 = bytesToBase64(ivBytes);
+
+    await expect(
+      decryptWithKey(ciphertextBase64, tamperedIvBase64, key)
+    ).rejects.toThrow();
   });
 
   it('seals and unlocks a full vault envelope and rejects an incorrect Master Password', async () => {
