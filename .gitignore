@@ -426,3 +426,17 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+
+# ============================================================================
+# WebExtension / WXT / Node.js Build & Dependency Artifacts
+# ============================================================================
+node_modules/
+.wxt/
+.output/
+dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+.DS_Store
